@@ -1,139 +1,70 @@
-import re
-import random
-import string
-import sqlite3
-import hashlib
+"""PWD ANALYSER"""
 
-# --- DATABASE SETUP (Optional Feature) ---
-# Create a local database to store and check against old/reused passwords
-def init_db():
-    conn = sqlite3.connect("password_history.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS password_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def is_password_reused(username, password):
-    """Hashes the password and checks if it exists in the database history."""
-    # Using SHA-256 for secure cryptographic comparison
-    hashed_pwd = hashlib.sha256(password.encode()).hexdigest()
-    
-    conn = sqlite3.connect("password_history.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM password_history WHERE username=? AND password_hash=?", (username, hashed_pwd))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None
-
-def save_password(username, password):
-    """Saves the hashed password to history."""
-    hashed_pwd = hashlib.sha256(password.encode()).hexdigest()
-    conn = sqlite3.connect("password_history.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO password_history (username, password_hash) VALUES (?, ?)", (username, hashed_pwd))
-    conn.commit()
-    conn.close()
+import math
 
 
-# --- STRENGTH ANALYZER CORE ---
-def analyze_password(password):
-    """Evaluates password length, complexity, and uniqueness."""
-    score = 0
-    feedback = []
+def score_password(password):
+    """
+    Analyzes the password and returns a dictionary with length,
+    entropy, scaled score, and a text verdict.
+    """
+    length = len(password)
+    if length == 0:
+        return {"length": 0, "entropy": 0, "score": 0, "verdict": "Very Weak"}
 
-    # 1. Length Check
-    if len(password) >= 12:
-        score += 2
-    elif len(password) >= 8:
-        score += 1
-        feedback.append("• Consider making it longer (12+ characters is ideal).")
+    # Determine character pool size (charset) based on characters used
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    # Check for special characters/symbols
+    has_special = any(not c.isalnum() for c in password)
+
+    pool_size = 0
+    if has_lower:
+        pool_size += 26
+    if has_upper:
+        pool_size += 26
+    if has_digit:
+        pool_size += 10
+    if has_special:
+        # Standard ASCII special characters
+        pool_size += 33
+
+    # Calculate Shannon Entropy: E = L * log2(R)
+    entropy = length * math.log2(pool_size)
+
+    # Calculate a score out of 100 based on standard entropy thresholds
+    # 80+ bits of entropy is generally considered very strong for passwords
+    score = min(100, int((entropy / 80) * 100))
+
+    # Determine verdict based on score
+    if score < 40:
+        verdict = "Weak"
+    elif score < 70:
+        verdict = "Moderate"
     else:
-        feedback.append("• Critical: Password is too short (minimum 8 characters).")
+        verdict = "Strong"
 
-    # 2. Complexity Checks
-    if re.search(r"[A-Z]", password):
-        score += 1
-    else:
-        feedback.append("• Missing uppercase letters.")
-
-    if re.search(r"[a-z]", password):
-        score += 1
-    else:
-        feedback.append("• Missing lowercase letters.")
-
-    if re.search(r"\d", password):
-        score += 1
-    else:
-        feedback.append("• Missing numerical digits.")
-
-    if re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        score += 1
-    else:
-        feedback.append("• Missing special characters.")
-
-    # 3. Uniqueness Check (Basic pattern repetition check)
-    if len(set(password)) < len(password) / 2:
-        feedback.append("• Contains too many repeating characters (low uniqueness).")
-        score = max(0, score - 1)
-
-    # Determine Rating
-    if score >= 5 and len(password) >= 12:
-        rating = "STRONG 🔥"
-    elif score >= 4:
-        rating = "MEDIUM ⚠️"
-    else:
-        rating = "WEAK ❌"
-
-    return rating, feedback
+    return {
+        "entropy": round(entropy, 2),
+        "score": score,
+        "verdict": verdict,
+        "length": length,
+    }
 
 
-# --- ALTERNATIVE GENERATOR ---
-def generate_strong_alternative(length=14):
-    """Suggests a strong, compliant random alternative."""
-    all_chars = string.ascii_letters + string.digits + "!@#$%^&*"
-    while True:
-        password = "".join(random.choice(all_chars) for _ in range(length))
-        # Ensure it meets strong criteria before returning
-        rating, _ = analyze_password(password)
-        if rating == "STRONG 🔥":
-            return password
-
-
-# --- MAIN RUNNER ---
 def main():
-    init_db()
-    print("=== PASSWORD STRENGTH ANALYZER ===")
-    username = input("Enter your username: ").strip()
-    password = input("Enter password to evaluate: ").strip()
+    """Main function to run the password strength checker interface."""
+    print("🔒 Password Strength Checker 🔒")
+    password = input("Enter a password to check: ")
 
-    if not password:
-        print("Password cannot be empty.")
-        return
+    result = score_password(password)
+    print("\n--- Password Analysis ---")
+    print(f"Length:  {result['length']}")
+    print(f"Entropy: {result['entropy']} bits")
+    print(f"Score:   {result['score']} / 100")
+    print(f"Verdict: {result['verdict']}")
 
-    # Check for reuse
-    if is_password_reused(username, password):
-        print("\n[!] ALERT: This password has been used before. Choose a unique one!")
-    else:
-        # Analyze Strength
-        rating, feedback = analyze_password(password)
-        print(f"\nPassword Rating: {rating}")
-        
-        if feedback:
-            print("\nSuggestions for improvement:")
-            for line in feedback:
-                print(line)
-        
-        if rating != "STRONG 🔥":
-            print(f"\nSuggested Alternative: {generate_strong_alternative()}")
-        else:
-            save_password(username, password)
-            print("\n[+] Success: Password meets standards and was saved securely.")
 
 if __name__ == "__main__":
     main()
